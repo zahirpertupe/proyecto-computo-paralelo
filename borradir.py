@@ -3,6 +3,9 @@ from medmnist import FractureMNIST3D
 import multiprocessing as mp
 import random
 
+
+#esto es una prueba de edición
+
 def Nivelar(n_p, num_pasos, matriz_datos):
     s = num_pasos % n_p    # residuo 
     t = num_pasos // n_p   # capas de cada procesador
