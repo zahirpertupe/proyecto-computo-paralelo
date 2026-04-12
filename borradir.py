@@ -2,9 +2,12 @@ import numpy as np
 from medmnist import FractureMNIST3D
 import multiprocessing as mp
 import random
-#esto es una prueba de edición
-#hola pirinola
+
+from tensorflow.python.ops.numpy_ops.np_dtypes import uint8
+
+
 def Nivelar(n_p, num_pasos, matriz_datos):
+    if n_p > num_pasos: raise ValueError(f"n_p ({n_p}) no puede superar num_pasos ({num_pasos})")
     s = num_pasos % n_p    # residuo 
     t = num_pasos // n_p   # capas de cada procesador
     out = []
@@ -12,16 +15,14 @@ def Nivelar(n_p, num_pasos, matriz_datos):
     
     for i in range(n_p):
         # Si hay residuo (s > 0), le damos 1 capa extra a este núcleo
-        pasos_locales = t + 1 if s > 0 else t 
-        
+        pasos_locales = t + 1 if s > 0 else t
         inicio_bloque = punto_actual
         #solo cambiamos la z (profundidad)
         bloque_asignado = matriz_datos[:, inicio_bloque:punto_actual + pasos_locales, :, :]
         out.append((inicio_bloque, bloque_asignado))
-            
         # el siguiente empezará donde termina el actual
         punto_actual = punto_actual + pasos_locales
-        s -= 1
+        if s>0 : s -= 1
         
     return out
 #------------ Calculamos la entropía de cada capa en el dataset --------------------
@@ -34,7 +35,7 @@ def Entropia(tupla_datos):
     
     for i in range(capas):
         indice = inicio + i
-        pixeles = matriz[:, i, :, :].flatten()
+        pixeles = matriz[:, i, :, :].flatten().astype(uint8)
         # frecuencias de intensidad (0 a 255)
         conteos = np.bincount(pixeles, minlength=256)
         #probabilidad (el número de casos donde aparece sobre el numero de casos totales)
@@ -50,8 +51,9 @@ def Entropia(tupla_datos):
 
 def init_centroides(datos, cant_centroides):
     centroides = []
-    for i in range(cant_centroides):
-        centroides.append(list(datos[random.randint(0, len(datos)-1)]))
+    indices = random.sample(range(len(datos)), cant_centroides)
+    for i in indices:
+        centroides.append(list(datos[i]))
     return centroides
 
 #función para asignar a cada pixel un cluster
@@ -136,7 +138,7 @@ if __name__ == '__main__':
     entropias_finales = []
     for lista_local in resultados:
         entropias_finales.extend(lista_local)
-        
+
     
     print("\nResultados de entropía por capa")
     for indice, entropia in entropias_finales:
