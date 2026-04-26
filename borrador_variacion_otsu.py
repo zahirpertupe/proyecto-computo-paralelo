@@ -3,6 +3,7 @@ from medmnist import FractureMNIST3D
 import multiprocessing as mp
 import random
 
+from sympy.codegen.ast import continue_
 from tensorflow.python.ops.numpy_ops.np_dtypes import uint8
 
 
@@ -106,19 +107,34 @@ def movimiento_centroides(viejos_centroides, nuevos_centroides, cant_centroides)
     return cambio_total
 
 
-# función principal :)
-def ejecutar_kmeans_lineal(datos, K, tol):
-    centroides = init_centroides(datos, K)
-    while True:
-        etiquetas = asignacion_clusters(datos, K, centroides)
-        # Usamos [c[:] for c in centroides] para asegurar una copia real de los valores
-        centroides_anteriores = [c[:] for c in centroides]
-        centroides = actualizar_centroides(datos, etiquetas, K, centroides_anteriores)
-        cambio = movimiento_centroides(centroides_anteriores, centroides, K)
-        if cambio < tol:
-            print(f"¡Convergencia alcanzada!")
-            break
-    return centroides, etiquetas
+def umbral_otsu(valores):
+    #los valores son mi array de una dimensión con mis entropías
+    v = np.array(valores).flatten()
+    # discretizamos en N bins para buscar el mejor corte
+    N = 1000
+    mn, mx = v.min(), v.max()
+    candidatos = np.linspace(mn, mx, N)  #obtenemos mil valores uniformemente espacioados entre el min y max de las entropías
+
+    mejor_varianza = -1
+    mejor_umbral = candidatos[0]
+
+    for t in candidatos:
+        clase0 = v[v <= t]
+        clase1 = v[v > t]     #vamos iterando haciendo una partición de las clases con los mil valores (creo q se puede paralelizar esto también (? )
+        if len(clase0) == 0 or len(clase1) == 0:
+            continue
+
+        w0 = len(clase0) / len(v)
+        w1 = len(clase1) / len(v)  #proporción de clases
+
+        #varianza inter-clase
+        varianza_inter = w0 * w1 * (clase0.mean() - clase1.mean()) ** 2
+
+        if varianza_inter > mejor_varianza:
+            mejor_varianza = varianza_inter
+            mejor_umbral = t  #actualizamos a aquel que produjo la mayor separación entre grupos
+
+    return mejor_umbral
 
 
 if __name__ == '__main__':
@@ -151,13 +167,13 @@ if __name__ == '__main__':
         print(f"Capa Z={indice:02d} | Entropía: {entropia:.4f}")
     valores_entropia = np.array([item[1] for item in entropias_finales]).reshape(-1, 1)
 
-    K = 2
-    margen_error = 0.001
-    centroides_finales, etiquetas_finales = ejecutar_kmeans_lineal(valores_entropia, K, margen_error)
+    #print(valores_entropia)
+    umbral = umbral_otsu(valores_entropia)
+    print(f"Umbral Otsu: {umbral:.4f}")
+    capas_utiles = 0
+    for indice, entropia in entropias_finales:
+        #print(entropia)
+        if entropia > umbral:
+            capas_utiles += 1
 
-    print(f"Centroide 1 (Posible ruido): {centroides_finales[0][0]:.4f}")
-    print(f"Centroide 2 (Posible tejido): {centroides_finales[1][0]:.4f}")
-
-    umbral = (centroides_finales[0][0] + centroides_finales[1][0]) / 2
-    print(f"Umbral calculado: {umbral:.4f}")
-    print(f"etiquetas por capa: {etiquetas_finales}")
+    print(f"Capas Utiles: {capas_utiles}")
