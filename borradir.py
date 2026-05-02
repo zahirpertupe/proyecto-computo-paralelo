@@ -48,6 +48,34 @@ def Entropia(tupla_datos):
     
     return r
 
+def Metricas(tupla_datos):
+    inicio, matriz = tupla_datos
+    r = []
+    capas = matriz.shape[1]
+
+    for i in range(capas):
+        indice = inicio + i
+        capa = matriz[:, i, :, :]  # (N, Y, X)
+
+        # entropía por imagen individual, guardadas en lista
+        entropias_por_imagen = []
+        for n in range(capa.shape[0]):
+            pixeles = capa[n].flatten().astype(np.uint8)
+            conteos = np.bincount(pixeles, minlength=256)
+            p = conteos / np.sum(conteos)
+            p = p[p > 0]
+            entropias_por_imagen.append(-np.sum(p * np.log2(p)))
+
+        entropias_por_imagen = np.array(entropias_por_imagen)
+
+        # promedio y std sobre las 1027 imágenes
+        entropia_media = entropias_por_imagen.mean()
+        entropia_std   = entropias_por_imagen.std()
+
+        r.append((indice, entropia_media, entropia_std))
+
+    return r
+
 
 def init_centroides(datos, cant_centroides):
     centroides = []
@@ -130,28 +158,27 @@ if __name__ == '__main__':
     tareas = Nivelar(n_p, Z, volumenes)
     print(f"Pool con {n_p} trabajadores")
 
-    # paralelización
     with mp.Pool(processes=n_p) as pool:
-        resultados = pool.map(Entropia, tareas)
+        resultados = pool.map(Metricas, tareas)
 
-    # ordenamos por indice
-    entropias_finales = []
+    metricas_finales = []
     for lista_local in resultados:
-        entropias_finales.extend(lista_local)
+        metricas_finales.extend(lista_local)
 
-    
-    print("\nResultados de entropía por capa")
-    for indice, entropia in entropias_finales:
-        print(f"Capa Z={indice:02d} | Entropía: {entropia:.4f}")
-    valores_entropia = np.array([item[1] for item in entropias_finales]).reshape(-1, 1)
+    metricas_finales.sort(key=lambda x: x[0])
 
-    K = 2
-    margen_error = 0.001
-    centroides_finales, etiquetas_finales = ejecutar_kmeans_lineal(valores_entropia, K, margen_error)
+    print(f"\n{'Capa':<8} {'Media':>10} {'Std':>10}")
+    print("-" * 32)
+    for indice, media, std in metricas_finales:
+        print(f"Z={indice:02d}   {media:>10.4f} {std:>10.4f}")
 
-    print(f"Centroide 1 (Posible ruido): {centroides_finales[0][0]:.4f}")
-    print(f"Centroide 2 (Posible tejido): {centroides_finales[1][0]:.4f}")
-    
-    umbral = (centroides_finales[0][0] + centroides_finales[1][0]) / 2
-    print(f"Umbral calculado: {umbral:.4f}")
-    print (f"etiquetas por capa: {etiquetas_finales}")
+    # K = 2
+    # margen_error = 0.001
+    # centroides_finales, etiquetas_finales = ejecutar_kmeans_lineal(valores_entropia, K, margen_error)
+    #
+    # print(f"Centroide 1 (Posible ruido): {centroides_finales[0][0]:.4f}")
+    # print(f"Centroide 2 (Posible tejido): {centroides_finales[1][0]:.4f}")
+    #
+    # umbral = (centroides_finales[0][0] + centroides_finales[1][0]) / 2
+    # print(f"Umbral calculado: {umbral:.4f}")
+    # print (f"etiquetas por capa: {etiquetas_finales}")
