@@ -47,11 +47,9 @@ def Entropia(tupla_datos):
 
 
 def init_centroides(datos, cant_centroides):
-    centroides = []
-    indices = random.sample(range(len(datos)), cant_centroides)
-    for i in indices:
-        centroides.append(list(datos[i]))
-    return centroides
+    valores = [d[0] for d in datos]
+    if cant_centroides == 2:
+        return [[min(valores)], [max(valores)]]
 
 #función para asignar a cada pixel un cluster
 def asignacion_clusters(datos, cant_centroides, centroides):
@@ -116,6 +114,7 @@ if __name__ == '__main__':
     dataset = FractureMNIST3D(split="train", download=True)
     #numero de procesadores
     n_p =3
+    expansion = 0.30
     volumenes = dataset.imgs
     #dimensiones de cada cosa
     N, Z, Y, X = dataset.imgs.shape
@@ -144,6 +143,8 @@ if __name__ == '__main__':
     umbral = (centroides_finales[0][0] + centroides_finales[1][0]) / 2
     print(f"Umbral calculado: {umbral:.4f}")
     print (f"etiquetas por capa: {etiquetas_finales}")
+
+    print("Volumen", volumenes.shape)
 
     capas_utiles = 0
     # Desempaquetado actualizado al retorno de Entropia: (indice, entropia)
