@@ -1,6 +1,7 @@
 import numpy as np
 from medmnist import FractureMNIST3D
 import multiprocessing as mp
+import os
 
 def Nivelar(n_p, num_pasos, matriz_datos):
     if n_p > num_pasos: raise ValueError(f"n_p ({n_p}) no puede superar num_pasos ({num_pasos})")
@@ -33,7 +34,7 @@ def entropia_gradiente(tupla_datos):
         #primero para entropía
         indice = inicio + i
         pixeles = matriz[:, i, :, :].flatten().astype(np.uint8)
-        # frecuencias de intensidad (0 a 255)
+        #frecuencias de intensidad (0 a 255)
         conteos = np.bincount(pixeles, minlength=256)
         #probabilidad (el número de casos donde aparece sobre el numero de casos totales)
         p = conteos / np.sum(conteos)
@@ -43,7 +44,6 @@ def entropia_gradiente(tupla_datos):
         entropia = -np.sum(p * np.log2(p))
         #ahora para el gradiente
         capa_f = matriz[:, i, :, :].astype(np.float32)
-
         # Diferencias absolutas en los ejes espaciales Y, X
         gy_abs = np.abs(np.diff(capa_f, axis=1))
         gx_abs = np.abs(np.diff(capa_f, axis=2))
@@ -115,7 +115,7 @@ def ejecutar_kmeans_lineal(datos, K, tol):
     centroides = init_centroides(datos, K)
     while True:
         etiquetas = asignacion_clusters(datos, K, centroides)
-        # Usamos [c[:] for c in centroides] para asegurar una copia real de los valores
+        #usamos [c[:] for c in centroides] para asegurar una copia real de los valores
         centroides_anteriores = [c[:] for c in centroides]
         centroides = actualizar_centroides(datos, etiquetas, K, centroides_anteriores)
         cambio = movimiento_centroides(centroides_anteriores, centroides, K)
@@ -130,7 +130,7 @@ if __name__ == '__main__':
     n_p =3
     volumenes = dataset.imgs
     N, Z, Y, X = volumenes.shape      #dimensiones de cada cosa
-    print(f"Cant. imágenes = {N}.")
+    #print(f"Cant. imágenes = {N}.")
     tareas = Nivelar(n_p, Z, volumenes)
     print(f"Número de procesadores: {n_p}")
 
@@ -168,7 +168,7 @@ if __name__ == '__main__':
     indices_retenidos = []
     #decisión de capas útiles
     for indice, entropia, gradiente in metricas_finales:
-        # Lógica de Consenso por Unión (OR)
+        #consenso por unión
         supera_entropia = entropia > umbral_entropia
         supera_gradiente = gradiente > umbral_gradiente
 
@@ -178,6 +178,20 @@ if __name__ == '__main__':
             capas_utiles += 1
             indices_retenidos.append(indice)
 
-        print(f"Z={indice:02d}   {entropia:>10.4f} {gradiente:>12.4f} {'útil' if util else 'fondo':>10}")
+        print(f"Z={indice} \t {entropia:.3f} \t {gradiente:.3f} \t {'útil' if util else 'fondo'}")
 
-    print(f"\nCapas útiles detectadas: {capas_utiles} de {Z}")
+    print(f"\nCapas útiles: {capas_utiles} de {Z}")
+
+    z_min = min(indices_retenidos)
+    z_max = max(indices_retenidos)
+
+    volumenes_recortados = volumenes[:, z_min:z_max + 1, :, :]
+    etiquetas = dataset.labels
+
+    directorio_salida = "dataset_procesado"
+    os.makedirs(directorio_salida, exist_ok=True)
+
+    ruta_archivo = os.path.join(directorio_salida, "fracturemnist_train_recortado.npz")
+    np.savez_compressed(ruta_archivo, images=volumenes_recortados, labels=etiquetas)
+
+    print(f"\nDataset recortado guardado en: {ruta_archivo}")
