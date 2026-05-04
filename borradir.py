@@ -2,6 +2,7 @@ import numpy as np
 from medmnist import FractureMNIST3D
 import multiprocessing as mp
 import os
+import time
 
 def Nivelar(n_p, num_pasos, matriz_datos):
     if n_p > num_pasos: raise ValueError(f"n_p ({n_p}) no puede superar num_pasos ({num_pasos})")
@@ -130,15 +131,41 @@ if __name__ == '__main__':
     n_p =3
     volumenes = dataset.imgs
     N, Z, Y, X = volumenes.shape      #dimensiones de cada cosa
-    #print(f"Cant. imágenes = {N}.")
-    tareas = Nivelar(n_p, Z, volumenes)
-    print(f"Número de procesadores: {n_p}")
 
-    with mp.Pool(processes=n_p) as pool:   #parte paralela
-        resultados = pool.map(entropia_gradiente, tareas)
+    #aquí se harán las pruebas y mediciones para el speed up y eficiencia
+
+    cantidad_procesadores = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    tiempos = {}  #donde va a ir el resultado de cada iteración
+    resultados_optimos = None
+
+    print(f"{'Procesadores'} \t | {'Tiempo (s)'} \t | {'Speed-up'} \t | {'Eficiencia'}")
+
+    #iteramos sobre la cantidad de procesadores
+    for p in cantidad_procesadores:
+        tareas = Nivelar(p, Z, volumenes)
+
+        inicio = time.time()
+        with mp.Pool(processes=p) as pool:
+            resultados = pool.map(entropia_gradiente, tareas)
+        fin = time.time()
+        t_ejecucion = fin - inicio
+        tiempos[p] = t_ejecucion
+        # El tiempo secuencial siempre es el del primer escenario (p=1)
+        t1 = tiempos[1]
+
+        speedup = t1 / t_ejecucion
+        eficiencia = speedup / p
+
+        print(f"{p} \t \t \t \t| {t_ejecucion:.3f} \t \t | {speedup:.4f} \t \t | {eficiencia:.4f}")
+
+        #conservar los resultados para el K-Means
+        resultados_optimos = resultados
+
+    print("-------------------------------------------------------------------------")
 
     metricas_finales = []
-    for lista_local in resultados:
+    for lista_local in resultados_optimos:
         metricas_finales.extend(lista_local)
 
     metricas_finales.sort(key=lambda x: x[0])
