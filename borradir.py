@@ -1,7 +1,6 @@
 import numpy as np
 from medmnist import FractureMNIST3D
 import multiprocessing as mp
-import random
 
 def Nivelar(n_p, num_pasos, matriz_datos):
     if n_p > num_pasos: raise ValueError(f"n_p ({n_p}) no puede superar num_pasos ({num_pasos})")
@@ -22,8 +21,8 @@ def Nivelar(n_p, num_pasos, matriz_datos):
         if s>0 : s -= 1
 
     return out
-#------------ Calculamos la entropía de cada capa en el dataset --------------------
-def Entropia(tupla_datos):
+#------------ Calculamos la entropía y gradiente espacial de cada capa en el dataset --------------------
+def entropia_gradiente(tupla_datos):
     inicio , matriz =tupla_datos
     #aquí guardamos resultados
     r =[]
@@ -31,6 +30,7 @@ def Entropia(tupla_datos):
     capas = matriz.shape[1]
 
     for i in range(capas):
+        #primero para entropía
         indice = inicio + i
         pixeles = matriz[:, i, :, :].flatten().astype(np.uint8)
         # frecuencias de intensidad (0 a 255)
@@ -41,7 +41,22 @@ def Entropia(tupla_datos):
         p = p[p>0]
         # Entropia: - sum(p * log2(p))
         entropia = -np.sum(p * np.log2(p))
-        r.append((indice, entropia))
+        #ahora para el gradiente
+        capa_f = matriz[:, i, :, :].astype(np.float32)
+
+        # Diferencias absolutas en los ejes espaciales Y, X
+        gy_abs = np.abs(np.diff(capa_f, axis=1))
+        gx_abs = np.abs(np.diff(capa_f, axis=2))
+
+        # Extraer el borde MÁS fuerte de cada imagen individualmente
+        # axis=(1, 2) colapsa Y y X, dejando un arreglo de tamaño N
+        picos_gy = gy_abs.max(axis=(1, 2))
+        picos_gx = gx_abs.max(axis=(1, 2))
+
+        # Promedio poblacional de los picos máximos
+        gradiente = (picos_gy.mean() + picos_gx.mean()) / 2.0
+
+        r.append((indice, entropia, gradiente))
 
     return r
 
@@ -105,7 +120,6 @@ def ejecutar_kmeans_lineal(datos, K, tol):
         centroides = actualizar_centroides(datos, etiquetas, K, centroides_anteriores)
         cambio = movimiento_centroides(centroides_anteriores, centroides, K)
         if cambio < tol:
-            print(f"¡Convergencia alcanzada!")
             break
     return centroides, etiquetas
 
@@ -114,44 +128,56 @@ if __name__ == '__main__':
     dataset = FractureMNIST3D(split="train", download=True)
     #numero de procesadores
     n_p =3
-    expansion = 0.30
     volumenes = dataset.imgs
-    #dimensiones de cada cosa
-    N, Z, Y, X = dataset.imgs.shape
-    print(f"Capas = {N}.")
+    N, Z, Y, X = volumenes.shape      #dimensiones de cada cosa
+    print(f"Cant. imágenes = {N}.")
     tareas = Nivelar(n_p, Z, volumenes)
-    print(f"Pool con {n_p} trabajadores")
+    print(f"Número de procesadores: {n_p}")
 
-    with mp.Pool(processes=n_p) as pool:
-        resultados = pool.map(Entropia, tareas)
+    with mp.Pool(processes=n_p) as pool:   #parte paralela
+        resultados = pool.map(entropia_gradiente, tareas)
 
     metricas_finales = []
     for lista_local in resultados:
         metricas_finales.extend(lista_local)
 
     metricas_finales.sort(key=lambda x: x[0])
+
     valores_entropia = [[m[1]] for m in metricas_finales]
+    valores_gradiente = [[m[2]] for m in metricas_finales]   #separamos para hacer 2 kmeans por separado
 
     K = 2
     margen_error = 0.001
-    centroides_finales, etiquetas_finales = ejecutar_kmeans_lineal(valores_entropia, K, margen_error)
-    centroides_finales.sort(key=lambda c: c[0])
 
-    print(f"Centroide 1 (Posible ruido): {centroides_finales[0][0]:.4f}")
-    print(f"Centroide 2 (Posible tejido): {centroides_finales[1][0]:.4f}")
+    centroides_finales_e, etiquetas_finales_e = ejecutar_kmeans_lineal(valores_entropia, K, margen_error)   #kmeans para entropía
+    centroides_finales_e.sort(key=lambda c: c[0])
 
-    umbral = (centroides_finales[0][0] + centroides_finales[1][0]) / 2
-    print(f"Umbral calculado: {umbral:.4f}")
-    print (f"etiquetas por capa: {etiquetas_finales}")
+    centroides_finales_g, etiquetas_finales_g = ejecutar_kmeans_lineal(valores_gradiente, K, margen_error)  #kmeans para gradiente espacial
+    centroides_finales_g.sort(key=lambda c: c[0])
 
-    print("Volumen", volumenes.shape)
+    umbral_entropia = (centroides_finales_e[0][0] + centroides_finales_e[1][0]) / 2
+    umbral_gradiente = (centroides_finales_g[0][0] + centroides_finales_g[1][0]) / 2
+
+    print(f"Umbral calculado para entropía: {umbral_entropia:.4f}")
+    print(f"Umbral calculado para gradiente: {umbral_gradiente:.4f}")
+    print (f"Etiquetas por capa (entropía): {etiquetas_finales_e}")
+    print(f"Etiqueta por capa (gradiente): {etiquetas_finales_g}")
+
 
     capas_utiles = 0
-    # Desempaquetado actualizado al retorno de Entropia: (indice, entropia)
-    for indice, entropia in metricas_finales:
-        util = entropia > umbral
+    indices_retenidos = []
+    #decisión de capas útiles
+    for indice, entropia, gradiente in metricas_finales:
+        # Lógica de Consenso por Unión (OR)
+        supera_entropia = entropia > umbral_entropia
+        supera_gradiente = gradiente > umbral_gradiente
+
+        util = supera_entropia or supera_gradiente
+
         if util:
             capas_utiles += 1
-        print(f"Z={indice:02d}   {entropia:>10.4f} {'útil' if util else 'fondo':>10}")
+            indices_retenidos.append(indice)
 
-    print(f"\nCapas útiles: {capas_utiles} de {Z}")
+        print(f"Z={indice:02d}   {entropia:>10.4f} {gradiente:>12.4f} {'útil' if util else 'fondo':>10}")
+
+    print(f"\nCapas útiles detectadas: {capas_utiles} de {Z}")
