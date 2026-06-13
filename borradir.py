@@ -125,11 +125,24 @@ def ejecutar_kmeans_lineal(datos, K, tol):
     return centroides, etiquetas
 
 if __name__ == '__main__':
-    #cargamos el dataset
-    dataset = FractureMNIST3D(split="train", download=True)
-    #numero de procesadores
+    #cargamos el dataset de manera local
+    archivo_local = np.load('fracturemnist3d.npz')
     n_p =3
-    volumenes = dataset.imgs
+
+    #juntamos las 3 particiciones del dataset oficial en una sola
+    volumenes = np.concatenate((
+        archivo_local['train_images'],
+        archivo_local['val_images'],
+        archivo_local['test_images']
+    ), axis=0)
+
+    #mismas etiquetas
+    etiquetas = np.concatenate((
+        archivo_local['train_labels'],
+        archivo_local['val_labels'],
+        archivo_local['test_labels']
+    ), axis=0)
+
     N, Z, Y, X = volumenes.shape      #dimensiones de cada cosa
 
     #aquí se harán las pruebas y mediciones para el speed up y eficiencia
@@ -213,12 +226,12 @@ if __name__ == '__main__':
     z_max = max(indices_retenidos)
 
     volumenes_recortados = volumenes[:, z_min:z_max + 1, :, :]
-    etiquetas = dataset.labels
 
     directorio_salida = "dataset_procesado"
     os.makedirs(directorio_salida, exist_ok=True)
 
-    ruta_archivo = os.path.join(directorio_salida, "fracturemnist_train_recortado.npz")
+    ruta_archivo = os.path.join(directorio_salida, "fracturemnist_recortado.npz")
     np.savez_compressed(ruta_archivo, images=volumenes_recortados, labels=etiquetas)
 
     print(f"\nDataset recortado guardado en: {ruta_archivo}")
+
