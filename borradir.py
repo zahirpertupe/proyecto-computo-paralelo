@@ -1,8 +1,9 @@
 import numpy as np
-from medmnist import FractureMNIST3D
 import multiprocessing as mp
 import os
 import time
+from scipy import ndimage
+import random
 
 def Nivelar(n_p, num_pasos, matriz_datos):
     if n_p > num_pasos: raise ValueError(f"n_p ({n_p}) no puede superar num_pasos ({num_pasos})")
@@ -124,6 +125,50 @@ def ejecutar_kmeans_lineal(datos, K, tol):
             break
     return centroides, etiquetas
 
+def aplicar_transformacion_3d(volumen):
+    angulo = random.uniform(-15, 15)       #angulo aleatorio
+    vol_aug = ndimage.rotate(volumen, angulo, axes=(1, 2), reshape=False, mode='nearest')   #la rotamos sin modificar las proprciones de las imágenes
+    shift_z = random.uniform(-1, 1)
+    shift_y = random.uniform(-3, 3)
+    shift_x = random.uniform(-3, 3)  #mover el contenido del volumen una cantidad de píxeles/voxels en cada eje
+    vol_aug = ndimage.shift(vol_aug, shift=(shift_z, shift_y, shift_x), mode='nearest')
+
+    if random.choice([True, False]):
+        vol_aug = np.flip(vol_aug, axis=2)   #puede que se haga espejo
+
+    if random.choice([True, False]):    #puede que agregue ruido gaussianoo
+        ruido = np.random.normal(0, 0.05 * np.max(vol_aug), vol_aug.shape)
+        vol_aug = np.clip(vol_aug + ruido, 0, 255)
+
+    return vol_aug.astype(np.uint8)
+
+
+def balancear_clases_entrenamiento(X_train, y_train):
+    y_train_flat = y_train.flatten()    #aplanamos
+    clases, conteos = np.unique(y_train_flat, return_counts=True)   #obtenemos las clases del dataset (3) y las instancias por cada clase
+    max_muestras = np.max(conteos)
+
+    X_balanceado = list(X_train)   #creamos nuestras variables con las etiquetas y datos
+    y_balanceado = list(y_train)
+
+    for c, conteo in zip(clases, conteos):
+        if conteo < max_muestras:    #nivelamos a la cantidad de instancias de la clase más grande
+            diferencia = max_muestras - conteo   #obtenemos la diferencia
+            indices_clase = np.where(y_train_flat == c)[0]
+            for _ in range(diferencia):
+                idx_aleatorio = random.choice(indices_clase)
+                volumen_sintetico = aplicar_transformacion_3d(X_train[idx_aleatorio])
+                X_balanceado.append(volumen_sintetico)   #vamos agregando las imágenes sintéticas
+                y_balanceado.append(y_train[idx_aleatorio])    #también vamos agregando a qué etiquetas pertenecen
+
+    X_final = np.array(X_balanceado)
+    y_final = np.array(y_balanceado)    #convertimos a arrays
+
+    indices_mezcla = np.arange(len(y_final))
+    np.random.shuffle(indices_mezcla)    #barajeamos todo para que los datos sintéticos queden revueltos
+
+    return X_final[indices_mezcla], y_final[indices_mezcla]
+
 if __name__ == '__main__':
     #cargamos el dataset de manera local
     archivo_local = np.load('fracturemnist3d.npz')
@@ -225,13 +270,30 @@ if __name__ == '__main__':
     z_min = min(indices_retenidos)
     z_max = max(indices_retenidos)
 
-    volumenes_recortados = volumenes[:, z_min:z_max + 1, :, :]
+    volumenes_recortados = volumenes[:, z_min:z_max + 1, :, :]    #aquí ya se guarda lo que serían todos los datos pero con el eje z recortado, minimizando la cantidad de capas
+
+    #aquí re-separamos los splits de train/test y val para hacer un data augmentation (lo que elegimos hacer)
+    X_train_rec = volumenes_recortados[:len(archivo_local['train_images'])]    #partición del dataset
+    X_val_rec = volumenes_recortados[len(archivo_local['train_images']):len(archivo_local['train_images']) + len(archivo_local['val_images'])]
+    X_test_rec = volumenes_recortados[len(archivo_local['train_images']) + len(archivo_local['val_images']):]
+
+    y_train_orig = etiquetas[:len(archivo_local['train_images'])]     #partición de las etiquetas
+    y_val_orig = etiquetas[len(archivo_local['train_images']):len(archivo_local['train_images']) + len(archivo_local['val_images'])]
+    y_test_orig = etiquetas[len(archivo_local['train_images']) + len(archivo_local['val_images']):]
+
+    X_train_bal, y_train_bal = balancear_clases_entrenamiento(X_train_rec, y_train_orig)   #aquí invocamos para hacer el data augmentation
 
     directorio_salida = "dataset_procesado"
     os.makedirs(directorio_salida, exist_ok=True)
-
     ruta_archivo = os.path.join(directorio_salida, "fracturemnist_recortado.npz")
-    np.savez_compressed(ruta_archivo, images=volumenes_recortados, labels=etiquetas)
+
+    np.savez_compressed(
+        ruta_archivo,
+        train_images=X_train_bal, train_labels=y_train_bal,
+        val_images=X_val_rec, val_labels=y_val_orig,
+        test_images=X_test_rec, test_labels=y_test_orig
+    )
 
     print(f"\nDataset recortado guardado en: {ruta_archivo}")
+
 
