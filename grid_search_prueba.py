@@ -18,6 +18,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 import time
 from imblearn.ensemble import BalancedRandomForestClassifier #intentamos también balancear
+from multiprocessing import shared_memory
 
 
 ########################################################################################################################
@@ -112,10 +113,9 @@ def grid_search_secuencial(modelo, param_prueba, X_train, y_train, X_val, y_val)
     lista_param = list(param_prueba.keys())
     combinaciones = [dict(zip(lista_param, vals)) for vals in product(*param_prueba.values())]
 
-    resultados = []
     rango_completo = [0, len(combinaciones) - 1]
-    #ejecutamos en el hilo principa
-    evaluar_modelo_parcial(rango_completo, combinaciones, modelo, X_train, y_train, X_val, y_val, resultados)
+    
+    resultados = evaluar_modelo_parcial(rango_completo, combinaciones, modelo, X_train, y_train, X_val, y_val, is_shm=False)
 
     resultados.sort(key=lambda r: (r[2], r[1]), reverse=True)
     return resultados
@@ -137,7 +137,7 @@ if __name__ == "__main__":
 
     param_pruebas_svm = {
                         "kernel": ["linear", "rbf", "poly"], "C": [0.1, 1, 10, 100],
-                        "gamma": ["scale", "auto", 0.01]}
+                        "gamma": ["scale", "auto", 0.01], "class_weight": ["balanced", None] # pesos para SVM, similar a Random Forest, ayuda a manejar clases desbalanceadas dando más peso a la clase minoritaria}
 
     #a partir de aquí es donde empieza a cambiar #######################################################################
 
@@ -203,11 +203,26 @@ if __name__ == "__main__":
             print(f"Eficiencia:        {eficiencia:.4f} ({(eficiencia * 100):.2f}%)")
 
         mejor_resultado = res_paralelo[0]
-        mejores_params, mejor_acc, mejor_f1, mejor_matriz, mejor_reporte = mejor_resultado
+       mejores_params, mejor_acc, mejor_f1 = mejor_resultado
+        
         print(f"\n---------> Mejores resultados para {nombre} <----------")
-        print(f"Accuracy: {mejor_acc:.4f} | F1-Score: {mejor_f1:.4f}")
+        print(f"Accuracy en validación: {mejor_acc:.4f} | F1-Score: {mejor_f1:.4f}")
         print(f"Hiperparámetros: {mejores_params}")
+        
+        # CORRECCIÓN: Entrenamos el mejor modelo una vez más para sacar la matriz y el reporte
+        if tipo == "rf":
+            mejor_modelo = RandomForestClassifier(**mejores_params, random_state=42, n_jobs=1)
+        elif tipo == "brf":
+            mejor_modelo = BalancedRandomForestClassifier(**mejores_params, random_state=42, n_jobs=1)
+        elif tipo == "knn":
+            mejor_modelo = KNeighborsClassifier(**mejores_params, n_jobs=1)
+        elif tipo == "svm":
+            mejor_modelo = SVC(**mejores_params)
+            
+        mejor_modelo.fit(X_train, y_train)
+        y_val_pred = mejor_modelo.predict(X_val)
+        
         print("\nMatriz de confusión:")
-        print(mejor_matriz)
+        print(confusion_matrix(y_val, y_val_pred))
         print("\nReporte de clasificación:")
-        print(mejor_reporte)
+        print(classification_report(y_val, y_val_pred))
