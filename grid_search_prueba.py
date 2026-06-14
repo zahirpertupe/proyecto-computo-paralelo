@@ -203,26 +203,26 @@ if __name__ == "__main__":
             print(f"Eficiencia:        {eficiencia:.4f} ({(eficiencia * 100):.2f}%)")
 
         mejor_resultado = res_paralelo[0]
-       mejores_params, mejor_acc, mejor_f1 = mejor_resultado
+        mejores_params, mejor_acc, mejor_f1 = mejor_resultado
         
-        print(f"\n---------> Mejores resultados para {nombre} <----------")
-        print(f"Accuracy en validación: {mejor_acc:.4f} | F1-Score: {mejor_f1:.4f}")
-        print(f"Hiperparámetros: {mejores_params}")
+         print(f"\n---------> Mejores resultados para {nombre} <----------")
+         print(f"Accuracy en validación: {mejor_acc:.4f} | F1-Score: {mejor_f1:.4f}")
+         print(f"Hiperparámetros: {mejores_params}")
         
-        # CORRECCIÓN: Entrenamos el mejor modelo una vez más para sacar la matriz y el reporte
-        if tipo == "rf":
+         # CORRECCIÓN: Entrenamos el mejor modelo una vez más para sacar la matriz y el reporte
+         if tipo == "rf":
             mejor_modelo = RandomForestClassifier(**mejores_params, random_state=42, n_jobs=1)
-        elif tipo == "brf":
+         elif tipo == "brf":
             mejor_modelo = BalancedRandomForestClassifier(**mejores_params, random_state=42, n_jobs=1)
-        elif tipo == "knn":
+         elif tipo == "knn":
             mejor_modelo = KNeighborsClassifier(**mejores_params, n_jobs=1)
-        elif tipo == "svm":
+         elif tipo == "svm":
             mejor_modelo = SVC(**mejores_params)
             
-        mejor_modelo.fit(X_train, y_train)
-        y_val_pred = mejor_modelo.predict(X_val)
+         mejor_modelo.fit(X_train, y_train)
+         y_val_pred = mejor_modelo.predict(X_val)
         
-        print("\nMatriz de confusión:")
-        print(confusion_matrix(y_val, y_val_pred))
-        print("\nReporte de clasificación:")
-        print(classification_report(y_val, y_val_pred))
+         print("\nMatriz de confusión:")
+         print(confusion_matrix(y_val, y_val_pred))
+         print("\nReporte de clasificación:")
+         print(classification_report(y_val, y_val_pred))
