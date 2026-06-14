@@ -17,6 +17,7 @@ from sklearn.metrics import accuracy_score, f1_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 import time
+from imblearn.ensemble import BalancedRandomForestClassifier #intentamos también balancear
 
 
 ########################################################################################################################
@@ -33,70 +34,77 @@ def repartir(cant_datos, cant_procesadores):
     return salida
 
 
-########################################################################################################################
-def evaluar_modelo_parcial(rango, combo, tipo_modelo, X_train, y_train, X_val, y_val, resultados_compartidos):
-    inicio = rango[0]
-    fin = rango[1]
-    #iteramos sobre las combinaciones que nos tocan
+def evaluar_modelo_parcial(rango, combo, tipo_modelo, X_data, y_train, X_test, y_test, is_shm=True, shape=None, dtype=None):
+    #usamos memoria compartida para evitar copiar el train en cada proceso, lo que sería muy costoso en tiempo y memoria
+    #Cada proceso accede a la misma región de memoria donde se encuentra el train, así ahorramos recursos
+    if is_shm:
+        #si is_shm es True, solo accedemos a la memoria compartida, no copiamos
+        #exist_shm es el objeto de memoria compartida que nos permite acceder a la matriz de train
+        exist_shm = shared_memory.SharedMemory(name=X_data)
+        #el puntero a la matriz de train 
+        X_train_ptr = np.ndarray(shape, dtype=dtype, buffer=exist_shm.buf)
+    else:
+        # en secuencial no usamos memoria compartida, así que simplemente asignamos el train a una variable local
+        X_train_ptr = X_data
+    
+    resultados_locales = []
+    inicio, fin = rango
+    
     for i in range(inicio, fin + 1):
         params = combo[i]
-
-        if tipo_modelo == "rf":
-            model = RandomForestClassifier(
-                max_depth=params["max_depth"],
-                n_estimators=params["n_estimators"],
-                min_samples_split=params["min_samples_split"],
-                min_samples_leaf=params["min_samples_leaf"],
-                max_features=params["max_features"],
-                random_state=42,
-                n_jobs=1,  #evita paralelismo anidado
-            )
+        if tipo_modelo == "rf":#esgún el tipo de modelo en texto elegimos
+            #incializamos el modelo según los parametros de la combinación  y con n_jobs=1 para evitar que cada modelo use paralelismo interno
+            model = RandomForestClassifier(**params, random_state=42, n_jobs=1)
+        elif tipo_modelo == "brf": #balanceado
+            model = BalancedRandomForestClassifier(**params, random_state=42, n_jobs=1)
         elif tipo_modelo == "knn":
-            model = KNeighborsClassifier(
-                n_neighbors=params["n_neighbors"],
-                metric=params["metric"],
-                weights=params["weights"],
-                n_jobs=1,
-            )
+            model = KNeighborsClassifier(**params, n_jobs=1)
         elif tipo_modelo == "svm":
-            model = SVC(
-                kernel=params["kernel"],
-                C=params["C"],
-                gamma=params["gamma"],
-            )
-        # aquí entrenamos y evaluamos el modelo que tocaba
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_val)
-        acc = accuracy_score(y_val, y_pred)
-        f1 = f1_score(y_val, y_pred, average="weighted")  # F1 para problemas multiclase
+            model = SVC(**params)
 
-        matriz_conf = confusion_matrix(y_val, y_pred)   #calculamos de una vez la matriz de confusión para que cuando se encuentre el mejor modelo ya esté hecha\
-        reporte = classification_report(y_val, y_pred, zero_division=0)
-        # lo guardamos en la memoria compartida, sin hacer return, como en los códigos de clase
-        resultados_compartidos.append((params, acc, f1, matriz_conf, reporte))
+        #entrenamos 
+        model.fit(X_train_ptr, y_train)
+        y_pred = model.predict(X_test)
+        acc = accuracy_score(y_test, y_pred)
+        f1 = f1_score(y_test, y_pred, average="binary")
+        resultados_locales.append((params, acc, f1))
+    
+    if is_shm:
+        #"cerramos" la memoria compartida
+        exist_shm.close()
+
+    return resultados_locales
 
 ########################################################################################################################
-def grid_search(modelo, param_prueba, X_train, y_train, X_val, y_val, n_jobs):
-    #obtenemos la lista con nuestros parámetros
+def grid_search(modelo, param_prueba, X_train, y_train, X_test, y_test, n_jobs):
+    #creamos todas las combinaciones de hiperparámetros a probar
     lista_param = list(param_prueba.keys())
-    combinaciones = [dict(zip(lista_param, vals)) for vals in product(*param_prueba.values())]   #obtenemos todas las combinaciones y creamos una lista con los diccionarios, que son los valores a insertar por cada modelo
-
+    combinaciones = [dict(zip(lista_param, vals)) for vals in product(*param_prueba.values())]
     lista_tareas = repartir(len(combinaciones), n_jobs)
-    manager = mp.Manager()
-    resultados_procesos = manager.list()
-    lista_procesos = []
 
-    for t in range(len(lista_tareas)):
-        p = mp.Process(
-            target=evaluar_modelo_parcial,
-            args=(lista_tareas[t], combinaciones, modelo, X_train, y_train, X_val, y_val, resultados_procesos))
-        p.start()
-        lista_procesos.append(p)
-    for p in lista_procesos:
-        p.join()
+    # copiamos el train una sola vez  a la memoria  compartida y pasamos cada proceso para que puedan acceder sin copiarlo
+    #reservamos memoria
+    shm = shared_memory.SharedMemory(create=True, size=X_train.nbytes)
+    #creamos la copia donde se va a guardar
+    X_shared = np.ndarray(X_train.shape, dtype=X_train.dtype, buffer=shm.buf)
+    #copiamos el train a la memoria compartida
+    np.copyto(X_shared, X_train)
 
-    lista_final = list(resultados_procesos)    #convertir a lista
-    lista_final.sort(key=lambda r: (r[2], r[1]), reverse=True)    #le hacemos sort
+    #empaquetamos los argumentos para cada proceso y la memoria compartida
+    argumentos = [(tarea, combinaciones, modelo, shm.name, y_train, X_test, y_test, True, X_train.shape, X_train.dtype)
+        for tarea in lista_tareas]
+    
+    #Pool
+    with mp.Pool(processes=n_jobs) as pool:
+        resultados_anidados = pool.starmap(evaluar_modelo_parcial, argumentos)
+
+    #cerramos memoria
+    shm.close()
+    #liberamos 
+    shm.unlink()
+
+    lista_final = [item for sublist in resultados_anidados for item in sublist]
+    lista_final.sort(key=lambda r: (r[2], r[1]), reverse=True)
     return lista_final
 
 ########################################################################################################################
@@ -118,8 +126,11 @@ if __name__ == "__main__":
 
     # Hiperparámetros optimizados para alta dimensionalidad / PCA
     param_pruebas_rf = {"max_depth": [10, 20, None], "n_estimators": [50, 100, 200], "min_samples_split": [2, 5],
-                        "min_samples_leaf": [1, 2], "max_features": ["sqrt", "log2"]   #limitamos la cantidad de características
+                        "min_samples_leaf": [1, 2], "max_features": ["sqrt", "log2"], "class_weight": ["balanced", "balanced_subsample", None]   #limitamos la cantidad de características
                         }
+    param_pruebas_brf = {"max_depth": [5, 10, 20, None], "n_estimators": [50, 100, 200], "min_samples_split": [2, 5, 10], "min_samples_leaf": [1, 2],
+        "sampling_strategy": ["all", "majority", "not minority"] #Estrategias de balanceo
+    }
 
     param_pruebas_knn = {"n_neighbors": [3, 5, 7, 11], "metric": ["euclidean", "cityblock", "chebyshev"],
                         "weights": ["uniform", "distance"]}
@@ -159,8 +170,9 @@ if __name__ == "__main__":
     #definimos nuestros modelos
     modelos = [
         ("Random Forest", "rf", param_pruebas_rf),
+        ("Balanced Random Forest", "brf", param_pruebas_brf), # <--- NUEVO EN LA LISTA
         ("KNN", "knn", param_pruebas_knn),
-        ("SVM", "svm", param_pruebas_svm)
+        ("SVM", "svm", param_pruebas_svm),
     ]
 
     #Evaluación mejorada pq la anterior estaba mal hecha
